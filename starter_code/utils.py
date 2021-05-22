@@ -7,7 +7,14 @@ from matplotlib import animation
 
 
 
-def visualize(car_states, ref_traj, obstacles, t, time_step, save=False):
+def visualize(
+        car_states: np.ndarray,
+        ref_traj: np.ndarray,
+        obstacles: np.ndarray,
+        t: np.ndarray,
+        time_step: float,
+        save=False,
+) -> None:
     init_state = car_states[0, :]
 
     def create_triangle(state=(0, 0, 0), h=0.5, w=0.25, update=False):
@@ -109,21 +116,5 @@ def visualize(car_states, ref_traj, obstacles, t, time_step, save=False):
         sim.save('./fig/animation' + str(time()) + '.gif', writer='ffmpeg', fps=15)
 
 
-# This function returns the reference point at time step k
-def lissajous(k):
-    xref_start = 0
-    yref_start = 0
-    A = 2
-    B = 2
-    a = 2*np.pi/50
-    b = 3*a
-    T = np.round(2*np.pi/(a*time_step))
-    k = k % T
-    delta = np.pi/2
-    xref = xref_start + A*np.sin(a*k*time_step + delta)
-    yref = yref_start + B*np.sin(b*k*time_step)
-    v = [A*a*np.cos(a*k*time_step + delta), B*b*np.cos(b*k*time_step)]
-    thetaref = np.arctan2(v[1], v[0])
-    return [xref, yref, thetaref]
 # ----------------------------------------------------------------------------------
 
