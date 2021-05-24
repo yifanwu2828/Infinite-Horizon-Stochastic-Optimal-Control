@@ -76,13 +76,16 @@ def visualize(
     for obs in obstacles:
         circles.append(plt.Circle((obs[0], obs[1]), obs[2], color='r', alpha=0.5))
     # create figure and axes
-    fig, ax = plt.subplots(figsize=(6, 6))
+    fig, ax = plt.subplots(figsize=(9, 9))
     min_scale_x = min(init_state[0], np.min(ref_traj[:, 0])) - 1.5
     max_scale_x = max(init_state[0], np.max(ref_traj[:, 0])) + 1.5
     min_scale_y = min(init_state[1], np.min(ref_traj[:, 1])) - 1.5
     max_scale_y = max(init_state[1], np.max(ref_traj[:, 1])) + 1.5
-    ax.set_xlim(left=min_scale_x, right=max_scale_x)
-    ax.set_ylim(bottom=min_scale_y, top=max_scale_y)
+    # TODO: change this back
+    # ax.set_xlim(left=min_scale_x, right=max_scale_x)
+    # ax.set_ylim(bottom=min_scale_y, top=max_scale_y)
+    ax.set_xlim(left=-10, right=10)
+    ax.set_ylim(bottom=-10, top=10)
     for circle in circles:
         ax.add_patch(circle)
     # create lines:
@@ -114,7 +117,23 @@ def visualize(
 
     if save:
         sim.save('./fig/animation' + str(time()) + '.gif', writer='ffmpeg', fps=15)
-
-
 # ----------------------------------------------------------------------------------
+
+
+def error_dynamics(cur_state, ref_cur_state, ref_nxt_state, u, tau=0.5, Wt=None):
+    cur_err = (ref_cur_state - cur_state).reshape(-1, 1)
+    theta = cur_state[2]
+    ref_diff = (ref_nxt_state-ref_cur_state).reshape(-1, 1)
+    u = u.reshape(-1, 1)
+    G = np.array([
+        [tau * np.cos(theta), 0],
+        [tau * np.sin(theta), 0],
+        [0,                              tau]
+    ])
+    if Wt is not None:
+        assert isinstance(Wt, np.ndarray)
+        nxt_err = cur_err + G @ u + ref_diff + Wt.reshape(-1, 1)
+    else:
+        nxt_err = cur_err + G @ u + ref_diff
+    return nxt_err
 

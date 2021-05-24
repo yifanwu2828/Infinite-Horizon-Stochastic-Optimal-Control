@@ -1,11 +1,16 @@
 import argparse
 import random
+import pickle
 from time import time
 from functools import lru_cache
 
 import numpy as np
+from casadi import Opti, cos
+from icecream import ic
+
 
 import utils
+import cec
 
 
 # Simulation params
@@ -82,6 +87,7 @@ def car_next_state(time_step, cur_state, control, noise=True):
         [0,             1]])
     f = rot_3d_z @ control
 
+    w = None
     if noise:
         # Gaussian Motion Noise (w_t ∈ R^{3}) with N(0, diag(σ)^2 )
         # where σ = [0.04, 0.04, 0.004] ∈ R^{3}
@@ -93,7 +99,31 @@ def car_next_state(time_step, cur_state, control, noise=True):
         new_state = cur_state + time_step * f.flatten() + w
     else:
         new_state = cur_state + time_step * f.flatten()
-    return new_state
+    return new_state, w
+
+
+def error_dynamics(cur_state, ref_cur_state, ref_nxt_state, u, tau=0.5, Wt=None):
+    cur_err = (ref_cur_state - cur_state).reshape(-1, 1)
+    theta = cur_state[2]
+    ref_diff = (ref_nxt_state-ref_cur_state).reshape(-1, 1)
+    u = u.reshape(-1, 1)
+    G = np.array([
+        [tau * np.cos(theta), 0],
+        [tau * np.sin(theta), 0],
+        [0,                              tau]
+    ])
+    if Wt is not None:
+        assert isinstance(Wt, np.ndarray)
+        nxt_err = cur_err + G @ u + ref_diff + Wt.reshape(-1, 1)
+    else:
+        nxt_err = cur_err + G @ u + ref_diff
+    return nxt_err
+
+
+def isPointInsideCircle(point, circle):
+    rad2 = circle[3]**2
+    dist2 = (point[0] - circle[0])**2 + (point[1] - circle[1])**2
+    return dist2 <= rad2
 
 
 if __name__ == '__main__':
@@ -106,14 +136,14 @@ if __name__ == '__main__':
         help="Verbose mode (False: no output, True: INFO)"
     )
     args = parser.parse_args()
-
     # set random seed
     random.seed(args.seed)
     np.random.seed(args.seed)
 
     # Obstacles in the environment
+    # [x, y, rad]
     obstacles = np.array([[-2, -2, 0.5], [1, 2, 0.5]])
-
+    ic(obstacles)
     # Params
     traj = lissajous
     ref_traj = []
@@ -139,12 +169,14 @@ if __name__ == '__main__':
         ################################################################
         # Generate control input
         # TODO: Replace this simple controller by your own controller
-        control = simple_controller(cur_state, cur_ref)
+        control_init = simple_controller(cur_state, cur_ref)
+        # print(f"[v,w]: {control}")
+        control = cec.CEC(cur_state, cur_ref, obstacles, u_init=control_init)
         print(f"[v,w]: {control}")
         ################################################################
 
         # Apply control input
-        next_state = car_next_state(time_step, cur_state, control, noise=True)
+        next_state, Wt = car_next_state(time_step, cur_state, control, noise=True)
         # Update current state
         cur_state = next_state
         # Loop time
@@ -153,7 +185,8 @@ if __name__ == '__main__':
             print(f"<----------{cur_iter}---------->")
             print(f"time: {t2 - t1}")
         times.append(t2-t1)
-        error += np.linalg.norm(cur_state - cur_ref)
+        cur_error = np.linalg.norm(cur_state - cur_ref)
+        error += cur_error
         cur_iter = cur_iter + 1
     end_mainloop_time = time()
     print('\n\n')
@@ -170,3 +203,7 @@ if __name__ == '__main__':
             utils.visualize(car_states, ref_traj, obstacles, times, time_step, save=args.save)
         except KeyboardInterrupt:
             pass
+
+
+
+
