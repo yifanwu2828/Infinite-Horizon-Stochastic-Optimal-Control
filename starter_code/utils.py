@@ -72,9 +72,8 @@ def visualize(
 
         return path, current_state, target_state,
 
-    circles = []
-    for obs in obstacles:
-        circles.append(plt.Circle((obs[0], obs[1]), obs[2], color='r', alpha=0.5))
+    circles = [plt.Circle((obs[0], obs[1]), obs[2], color='r', alpha=0.5) for obs in obstacles]
+
     # create figure and axes
     fig, ax = plt.subplots(figsize=(9, 9))
     min_scale_x = min(init_state[0], np.min(ref_traj[:, 0])) - 1.5
@@ -92,16 +91,17 @@ def visualize(
     #   path
     path, = ax.plot([], [], 'k', linewidth=2)
 
-    #   current_state
+    # current_state
     current_triangle = create_triangle(init_state[:3])
     current_state = ax.fill(current_triangle[:, 0], current_triangle[:, 1], color='r')
     current_state = current_state[0]
-    #   target_state
+
+    # target_state
     target_triangle = create_triangle(ref_traj[0, 0:3])
     target_state = ax.fill(target_triangle[:, 0], target_triangle[:, 1], color='b')
     target_state = target_state[0]
 
-    #   reference trajectory
+    # reference trajectory
     ax.scatter(ref_traj[:, 0], ref_traj[:, 1], marker='x')
 
     sim = animation.FuncAnimation(
@@ -117,23 +117,58 @@ def visualize(
 
     if save:
         sim.save('./fig/animation' + str(time()) + '.gif', writer='ffmpeg', fps=15)
+
+
 # ----------------------------------------------------------------------------------
 
+def simple_controller(cur_state, ref_state, v_limit=(0, 1), w_limit=(-1, 1)):
+    """This function implements a simple P controller"""
+    v_min, v_max = v_limit
+    w_min, w_max = w_limit
+    k_v = 0.55
+    k_w = 1.0
+    v = k_v * np.sqrt((cur_state[0] - ref_state[0])**2 + (cur_state[1] - ref_state[1])**2)
+    v = np.clip(v, v_min, v_max)
+    angle_diff = ref_state[2] - cur_state[2]
+    angle_diff = (angle_diff + np.pi) % (2 * np.pi) - np.pi
+    w = k_w * angle_diff
+    w = np.clip(w, w_min, w_max)
+    return np.array([v, w])
 
-def error_dynamics(cur_state, ref_cur_state, ref_nxt_state, u, tau=0.5, Wt=None):
-    cur_err = (ref_cur_state - cur_state).reshape(-1, 1)
+
+def error_dynamics(cur_state, ref_cur_state, ref_nxt_state, control, tau=0.5, Wt=None):
+    """
+    :param cur_state: [x_t, y_t, theta_t].T
+    :param ref_cur_state:
+    :param ref_nxt_state:
+    :param control: control [v_t, w_t]
+    :param tau: time_step
+    :param Wt: Gaussian Motion Noise W_t
+    :return: error next step
+    """
+    # assert isinstance(cur_state, np.ndarray)
+    # assert isinstance(ref_cur_state, np.ndarray)
+    # assert isinstance(ref_nxt_state, np.ndarray)
+    # assert isinstance(control, np.ndarray)
+    # assert isinstance(tau, float)
+    cur_err = (cur_state - ref_cur_state).reshape(-1, 1)
     theta = cur_state[2]
-    ref_diff = (ref_nxt_state-ref_cur_state).reshape(-1, 1)
-    u = u.reshape(-1, 1)
-    G = np.array([
-        [tau * np.cos(theta), 0],
-        [tau * np.sin(theta), 0],
-        [0,                              tau]
+
+    ref_diff = (ref_nxt_state - ref_cur_state).reshape(-1, 1)
+
+    u = control.reshape(-1, 1)
+
+    G = tau * np.array([
+        [np.cos(theta), 0],
+        [np.sin(theta), 0],
+        [0,             1],
     ])
+
     if Wt is not None:
-        assert isinstance(Wt, np.ndarray)
+        assert isinstance(Wt, np.ndarray), "Noise should be np.ndarray"
         nxt_err = cur_err + G @ u + ref_diff + Wt.reshape(-1, 1)
     else:
         nxt_err = cur_err + G @ u + ref_diff
     return nxt_err
+
 

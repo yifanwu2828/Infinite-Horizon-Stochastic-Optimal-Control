@@ -1,34 +1,18 @@
 import argparse
 import random
-import pickle
 from time import time
 from functools import lru_cache
 
 import numpy as np
-from casadi import Opti, cos
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 from icecream import ic
-
 
 import utils
 import cec
 
 
-# Simulation params
-time_step = 0.5  # time between steps in seconds
-sim_time = 120   # simulation time
-
-# Car params
-x_init = 1.5
-y_init = 0.0
-theta_init = np.pi / 2
-
-v_max = 1
-v_min = 0
-w_max = 1
-w_min = -1
-
-
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=2048)
 def lissajous(k):
     """
     This function returns the reference point at time step k
@@ -53,23 +37,9 @@ def lissajous(k):
     yref = yref_start + B * np.sin(b_k_t)
     v = [A*a*np.cos(a_k_t + delta), B*b*np.cos(b_k_t)]
     thetaref = np.arctan2(v[1], v[0])
-    return [xref, yref, thetaref]
+    return np.array([xref, yref, thetaref])
 
 
-def simple_controller(cur_state, ref_state):
-    """This function implements a simple P controller"""
-    k_v = 0.55
-    k_w = 1.0
-    v = k_v*np.sqrt((cur_state[0] - ref_state[0])**2 + (cur_state[1] - ref_state[1])**2)
-    v = np.clip(v, v_min, v_max)
-    angle_diff = ref_state[2] - cur_state[2]
-    angle_diff = (angle_diff + np.pi) % (2 * np.pi) - np.pi
-    w = k_w*angle_diff
-    w = np.clip(w, w_min, w_max)
-    return [v, w]
-
-
-# This function implement the car dynamics
 def car_next_state(time_step, cur_state, control, noise=True):
     """
     The discrete-time kinematic model of the differential-drive robot
@@ -102,66 +72,104 @@ def car_next_state(time_step, cur_state, control, noise=True):
     return new_state, w
 
 
-def error_dynamics(cur_state, ref_cur_state, ref_nxt_state, u, tau=0.5, Wt=None):
-    cur_err = (ref_cur_state - cur_state).reshape(-1, 1)
-    theta = cur_state[2]
-    ref_diff = (ref_nxt_state-ref_cur_state).reshape(-1, 1)
-    u = u.reshape(-1, 1)
-    G = np.array([
-        [tau * np.cos(theta), 0],
-        [tau * np.sin(theta), 0],
-        [0,                              tau]
-    ])
-    if Wt is not None:
-        assert isinstance(Wt, np.ndarray)
-        nxt_err = cur_err + G @ u + ref_diff + Wt.reshape(-1, 1)
-    else:
-        nxt_err = cur_err + G @ u + ref_diff
-    return nxt_err
+def predict_T_step(cur_state, traj, cur_iter, T=10, time_step=0.5):
+    """
 
+    :param cur_state: current car state
+    :param traj: reference trajectory
+    :param cur_iter: idx to track traj
+    :param T: number of steps
+    :param time_step: 0.5
+    :return:
+    """
+    state_seq = []
+    ref_seq = []
+    act_seq = []
+    error_seq = []
 
-def isPointInsideCircle(point, circle):
-    rad2 = circle[3]**2
-    dist2 = (point[0] - circle[0])**2 + (point[1] - circle[1])**2
-    return dist2 <= rad2
+    state = cur_state
+    for i in range(T):
+        state_seq.append(state)
+
+        # reference
+        cur_ref = traj(cur_iter + i)
+        ref_nxt_state = traj(cur_iter + i+1)
+        ref_seq.append(cur_ref)
+
+        # control
+        u = utils.simple_controller(state, cur_ref)
+        act_seq.append(u)
+
+        # error
+        err = utils.error_dynamics(state, cur_ref, ref_nxt_state, u, Wt=None)
+        error_seq.append(err)
+
+        # car next state
+        nxt_state, _ = car_next_state(time_step, state, u, noise=False)
+
+    state_seq = np.array(state_seq).reshape(3, -1)
+    ref_seq = np.array(ref_seq).reshape(3, -1)
+    act_seq = np.array(act_seq).reshape(2, -1)
+    error_seq = np.array(error_seq).reshape(3, -1)
+    return state_seq, ref_seq, act_seq, error_seq
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-r", "--render", help="Visualize Env", action="store_true", default=True)
-    parser.add_argument("--save", help="Save Trajectory", action="store_true", default=False)
-    parser.add_argument("--seed", help="Random Generator Seed", type=int, default=42)
-    parser.add_argument(
-        "-verb", "--verbose", action="store_true", default=True,
-        help="Verbose mode (False: no output, True: INFO)"
-    )
-    args = parser.parse_args()
+    if True:
+        p = argparse.ArgumentParser()
+        p.add_argument("--sim_time", help="simulation time(not change)", type=float, default=120)
+        p.add_argument("--time_step", help="time between steps in seconds", type=float, default=0.5)
+        p.add_argument("-r", "--render", help="Visualize Env", action="store_true", default=True)
+        p.add_argument("--save", help="Save Trajectory", action="store_true", default=False)
+        p.add_argument("--seed", help="Random Generator Seed", type=int, default=42)
+        p.add_argument(
+            "-verb", "--verbose", action="store_true", default=True,
+            help="Verbose mode (False: no output, True: INFO)"
+        )
+        args = p.parse_args()
     # set random seed
     random.seed(args.seed)
     np.random.seed(args.seed)
 
-    # Obstacles in the environment
-    # [x, y, rad]
-    obstacles = np.array([[-2, -2, 0.5], [1, 2, 0.5]])
-    ic(obstacles)
+    # Simulation params
+    time_step = args.time_step
+
+    # Car params
+    x_init = 1.5
+    y_init = 0.0
+    theta_init = np.pi / 2
+
+    # Control limits
+    v_min, v_max = (0, 1)
+    w_min, w_max = (-1, 1)
+
+    # Obstacles in the environment [x, y, rad]
+    obstacles = np.array([
+        [-2, -2, 0.5],
+        [1,   2, 0.5]
+    ])
+
     # Params
     traj = lissajous
     ref_traj = []
-    error = 0.0
     car_states = []
     times = []
+    error = 0.0
 
-    # Start main loop
-    start_main_loop = time()  # return time in sec
+    # -------------------- Start main loop------------------------------------------
     # Initialize state
+    start_main_loop = time()
     cur_state = np.array([x_init, y_init, theta_init], dtype=np.float64)
+
     cur_iter = 0
     # Main loop
-    while cur_iter * time_step < sim_time:
+    while cur_iter * time_step < args.sim_time:
         t1 = time()
+
         # Get reference state
-        cur_time = cur_iter * time_step
+        cur_time_step = cur_iter * time_step
         cur_ref = traj(cur_iter)
+
         # Save current state and reference state for visualization
         ref_traj.append(cur_ref)
         car_states.append(cur_state)
@@ -169,29 +177,32 @@ if __name__ == '__main__':
         ################################################################
         # Generate control input
         # TODO: Replace this simple controller by your own controller
-        control_init = simple_controller(cur_state, cur_ref)
-        # print(f"[v,w]: {control}")
-        control = cec.CEC(cur_state, cur_ref, obstacles, u_init=control_init)
+        # control = simple_controller(cur_state, cur_ref)
+
+        # TODO: predict T=10 step
+        states, ref_states, control_seq, err_seq = predict_T_step(cur_state, traj, cur_iter, T=10)
+        control = cec.CEC(states, ref_states, control_seq, err_seq, obstacles)
         print(f"[v,w]: {control}")
         ################################################################
 
         # Apply control input
         next_state, Wt = car_next_state(time_step, cur_state, control, noise=True)
+
         # Update current state
         cur_state = next_state
         # Loop time
         t2 = time()
         if args.verbose:
-            print(f"<----------{cur_iter}---------->")
-            print(f"time: {t2 - t1}")
-        times.append(t2-t1)
+            print(f"\n<----------{cur_iter}---------->")
+            print(f"time: {t2 - t1: .3f}")
+        times.append(t2 - t1)
         cur_error = np.linalg.norm(cur_state - cur_ref)
         error += cur_error
-        cur_iter = cur_iter + 1
+        cur_iter += 1
     end_mainloop_time = time()
     print('\n\n')
-    print(f'Total time: {end_mainloop_time - start_main_loop}')
-    print(f'Average iteration time: {np.array(times).mean() * 1000} ms')
+    print(f'Total duration: {end_mainloop_time - start_main_loop}')
+    print(f'Average iteration time: {np.array(times).mean() * 1e3} ms')
     print(f'Final error: {error}')
 
     # Visualization
@@ -202,6 +213,7 @@ if __name__ == '__main__':
         try:
             utils.visualize(car_states, ref_traj, obstacles, times, time_step, save=args.save)
         except KeyboardInterrupt:
+            plt.close('all')
             pass
 
 
