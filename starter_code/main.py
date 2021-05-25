@@ -57,7 +57,6 @@ def car_next_state(time_step, cur_state, control, noise=True):
         [0,             1]])
     f = rot_3d_z @ control
 
-    w = None
     if noise:
         # Gaussian Motion Noise (w_t ∈ R^{3}) with N(0, diag(σ)^2 )
         # where σ = [0.04, 0.04, 0.004] ∈ R^{3}
@@ -69,7 +68,7 @@ def car_next_state(time_step, cur_state, control, noise=True):
         new_state = cur_state + time_step * f.flatten() + w
     else:
         new_state = cur_state + time_step * f.flatten()
-    return new_state, w
+    return new_state
 
 
 def predict_T_step(cur_state, traj, cur_iter, T=10, time_step=0.5):
@@ -85,33 +84,43 @@ def predict_T_step(cur_state, traj, cur_iter, T=10, time_step=0.5):
     state_seq = []
     ref_seq = []
     act_seq = []
-    error_seq = []
+    true_error_seq = []
+    pred_error_seq = []
 
+    # current state
     state = cur_state
     for i in range(T):
         state_seq.append(state)
 
-        # reference
+        # Reference state
         cur_ref = traj(cur_iter + i)
-        ref_nxt_state = traj(cur_iter + i+1)
         ref_seq.append(cur_ref)
 
-        # control
+        # Control
         u = utils.simple_controller(state, cur_ref)
         act_seq.append(u)
 
-        # error
-        err = utils.error_dynamics(state, cur_ref, ref_nxt_state, u, Wt=None)
-        error_seq.append(err)
+        # True error (p̃ t := p t − r t and θ̃ t := θ t − α t)
+        true_error = state - cur_ref
+        true_error_seq.append(true_error)
 
-        # car next state
-        nxt_state, _ = car_next_state(time_step, state, u, noise=False)
+        # # Predict error (noise free)
+        # pred_nxt_error = utils.error_dynamics(true_error, cur_ref, traj(cur_iter + i+1), u, noise=False)
+        # if i == 0:
+        #     pred_error_seq.append(true_error)
+        # pred_error_seq.append(pred_nxt_error)
+
+        # Car next state (noise free)
+        nxt_state = car_next_state(time_step, state, u, noise=False)
+        state = nxt_state
 
     state_seq = np.array(state_seq).reshape(3, -1)
     ref_seq = np.array(ref_seq).reshape(3, -1)
     act_seq = np.array(act_seq).reshape(2, -1)
-    error_seq = np.array(error_seq).reshape(3, -1)
-    return state_seq, ref_seq, act_seq, error_seq
+    true_error_seq = np.array(true_error_seq).reshape(3, -1)
+    # pred_error_seq = np.array(true_error_seq).reshape(3, -1)
+
+    return state_seq, ref_seq, act_seq, true_error_seq, pred_error_seq
 
 
 if __name__ == '__main__':
@@ -180,13 +189,13 @@ if __name__ == '__main__':
         # control = simple_controller(cur_state, cur_ref)
 
         # TODO: predict T=10 step
-        states, ref_states, control_seq, err_seq = predict_T_step(cur_state, traj, cur_iter, T=10)
-        control = cec.CEC(states, ref_states, control_seq, err_seq, obstacles)
+        states, ref_states, control_seq, err_seq, _ = predict_T_step(cur_state, traj, cur_iter, T=5)
+        control = cec.CEC(ref_states, control_seq, err_seq, obstacles)
         print(f"[v,w]: {control}")
         ################################################################
 
         # Apply control input
-        next_state, Wt = car_next_state(time_step, cur_state, control, noise=True)
+        next_state = car_next_state(time_step, cur_state, control, noise=True)
 
         # Update current state
         cur_state = next_state

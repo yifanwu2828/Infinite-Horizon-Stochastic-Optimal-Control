@@ -121,7 +121,7 @@ def visualize(
 
 # ----------------------------------------------------------------------------------
 
-def simple_controller(cur_state, ref_state, v_limit=(0, 1), w_limit=(-1, 1)):
+def simple_controller(cur_state, ref_state, v_limit=(0.0, 1.0), w_limit=(-1.0, 1.0)):
     """This function implements a simple P controller"""
     v_min, v_max = v_limit
     w_min, w_max = w_limit
@@ -136,39 +136,48 @@ def simple_controller(cur_state, ref_state, v_limit=(0, 1), w_limit=(-1, 1)):
     return np.array([v, w])
 
 
-def error_dynamics(cur_state, ref_cur_state, ref_nxt_state, control, tau=0.5, Wt=None):
+def error_dynamics(cur_error, ref_cur_state, ref_nxt_state, control, tau=0.5, noise=False):
     """
-    :param cur_state: [x_t, y_t, theta_t].T
+    :param cur_error:
     :param ref_cur_state:
     :param ref_nxt_state:
     :param control: control [v_t, w_t]
     :param tau: time_step
-    :param Wt: Gaussian Motion Noise W_t
+    :param noise: if True: add Gaussian Motion Noise W_t
     :return: error next step
     """
-    # assert isinstance(cur_state, np.ndarray)
-    # assert isinstance(ref_cur_state, np.ndarray)
-    # assert isinstance(ref_nxt_state, np.ndarray)
-    # assert isinstance(control, np.ndarray)
-    # assert isinstance(tau, float)
-    cur_err = (cur_state - ref_cur_state).reshape(-1, 1)
-    theta = cur_state[2]
+    assert isinstance(cur_error, np.ndarray)
+    assert isinstance(ref_cur_state, np.ndarray)
+    assert isinstance(ref_nxt_state, np.ndarray)
+    assert isinstance(control, np.ndarray)
+    assert isinstance(tau, float)
 
-    ref_diff = (ref_nxt_state - ref_cur_state).reshape(-1, 1)
+    cur_error = cur_error.reshape(3, -1)
+    theta_err = cur_error[2]
 
-    u = control.reshape(-1, 1)
+    ref_diff = (ref_cur_state - ref_nxt_state).reshape(3, -1)
 
-    G = tau * np.array([
-        [np.cos(theta), 0],
-        [np.sin(theta), 0],
-        [0,             1],
+    u = control.reshape(2, -1)
+
+    G = np.array([
+        [tau * np.cos(theta_err), 0],
+        [tau * np.sin(theta_err), 0],
+        [0,                 tau],
     ])
-
-    if Wt is not None:
-        assert isinstance(Wt, np.ndarray), "Noise should be np.ndarray"
-        nxt_err = cur_err + G @ u + ref_diff + Wt.reshape(-1, 1)
-    else:
-        nxt_err = cur_err + G @ u + ref_diff
+    w = 0
+    if noise:
+        '''
+        Gaussian Motion Noise (w_t ∈ R^{3}) with N(0, diag(σ)^2 )
+        where σ = [0.04, 0.04, 0.004] ∈ R^{3}
+        '''
+        # mean and standard deviation for (x,y)
+        mu_xy, sigma_xy = 0, 0.04
+        w_xy = np.random.normal(mu_xy, sigma_xy, 2)
+        # mean and standard deviation for theta
+        mu_theta, sigma_theta = 0, 0.004
+        w_theta = np.random.normal(mu_theta, sigma_theta, 1)
+        w = np.concatenate((w_xy, w_theta))
+    nxt_err = cur_error + G @ u + ref_diff + w
     return nxt_err
 
 
