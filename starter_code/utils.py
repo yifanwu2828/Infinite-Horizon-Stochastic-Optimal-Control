@@ -1,10 +1,11 @@
 from time import time
 
 import numpy as np
-from numpy import sin, cos, pi
+from scipy.stats import multivariate_normal
 import matplotlib.pyplot as plt
 from matplotlib import animation
 
+from icecream import ic
 
 
 def visualize(
@@ -26,8 +27,8 @@ def visualize(
             [h, 0]
         ]).T
         rotation_matrix = np.array([
-            [cos(th), -sin(th)],
-            [sin(th), cos(th)]
+            [np.cos(th), -np.sin(th)],
+            [np.sin(th), np.cos(th)]
         ])
 
         coords = np.array([[x, y]]) + (rotation_matrix @ triangle).T
@@ -153,8 +154,7 @@ def error_dynamics(cur_error, ref_cur_state, ref_nxt_state, control, tau=0.5, no
     assert isinstance(tau, float)
 
     cur_error = cur_error.reshape(3, -1)
-    theta_err = cur_error[2]
-
+    theta_err = cur_error[2, 0]
     ref_diff = (ref_cur_state - ref_nxt_state).reshape(3, -1)
 
     u = control.reshape(2, -1)
@@ -162,7 +162,7 @@ def error_dynamics(cur_error, ref_cur_state, ref_nxt_state, control, tau=0.5, no
     G = np.array([
         [tau * np.cos(theta_err), 0],
         [tau * np.sin(theta_err), 0],
-        [0,                 tau],
+        [0,                     tau],
     ])
     w = 0
     if noise:
@@ -181,3 +181,64 @@ def error_dynamics(cur_error, ref_cur_state, ref_nxt_state, control, tau=0.5, no
     return nxt_err
 
 
+class MDP(object):
+    def __init__(
+            self,
+            dt: float,
+            t: int = 100,  # should be fixed at 100 since reference trajectory is periodic 100
+            x_lim=(-3, 3), y_lim=(-3, 3), theta_limit=(-np.pi, np.pi),
+            v_lim=(-0, 1), w_lim=(-1, 1),
+            gamma: float = 0.99,
+            res: float = 0.1
+    ):
+        # Discrete time horizon
+        self.dt = dt
+        self.t = np.arange(0, t, self.dt)
+
+        # position
+        self.x_min, self.x_max = x_lim
+        self.y_min, self.y_max = y_lim
+        # orientation
+        self.theta_min, self.theta_max = theta_limit
+
+        # velocity
+        self.v_min, self.v_max = v_lim
+        self.w_min, self.w_max = w_lim
+        self.gamma = gamma
+        self.res = res
+
+        nX = np.ceil(((self.x_max - self.x_min) / self.res) + 1).astype('int')
+        nY = np.ceil(((self.y_max - self.y_min) / self.res) + 1).astype('int')
+        nTheta = np.ceil(((self.theta_max - self.theta_min) / self.res) + 1).astype('int')
+        self.nS = nX * nY * nTheta
+
+        nV = np.ceil(((self.v_max - self.v_min) / self.res) + 1).astype('int')
+        nW = np.ceil(((self.w_max - self.w_min) / self.res) + 1).astype('int')
+        self.nA = nV * nW
+
+        self.x = np.linspace(self.x_min, self.x_max, nX)
+        self.y = np.linspace(self.y_min, self.y_max, nY)
+        self.theta = np.linspace(self.theta_min, self.theta_max, nTheta)  # endpoint=False)
+
+        self.v = np.linspace(self.v_min, self.v_max, nV)  # linear velocity
+        self.w = np.linspace(self.w_min, self.w_max, nW)  # angular velocity
+
+
+    @staticmethod
+    def wrap_angle(angles):
+        n = int(np.abs((angles / np.pi)))
+        if n % 2 == 0:
+            angles = angles - n * np.pi * np.sign(angles)
+        else:
+            angles = angles - (n + 1) * np.pi * np.sign(angles)
+        return angles
+
+    def build_MDP(self):
+        # P(s, a, s')
+        P = np.zeros((self.nS, self.nA, self.nS))
+        # L(x, u)
+        L = np.zeros((self.nS, self.nA))
+
+
+if __name__ == '__main__':
+    mdp = MDP(dt=0.5)

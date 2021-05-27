@@ -5,14 +5,12 @@ from functools import lru_cache
 
 import numpy as np
 import matplotlib.pyplot as plt
-from tqdm import tqdm
 from icecream import ic
 
 import utils
 import cec
 
 
-@lru_cache(maxsize=2048)
 def lissajous(k):
     """
     This function returns the reference point at time step k
@@ -25,7 +23,7 @@ def lissajous(k):
     B = 2
     a = 2 * np.pi / 50
     b = 3 * a
-    a_t = a*time_step
+    a_t = a * time_step
     T = np.round(2 * np.pi / a_t)
 
     k = k % T
@@ -160,9 +158,7 @@ if __name__ == '__main__':
 
     # Params
     traj = lissajous
-    ref_traj = []
-    car_states = []
-    times = []
+    car_states, ref_traj, times = [], [], []
     error = 0.0
 
     # -------------------- Start main loop------------------------------------------
@@ -186,32 +182,30 @@ if __name__ == '__main__':
         ################################################################
         # Generate control input
         # TODO: Replace this simple controller by your own controller
-        # control = simple_controller(cur_state, cur_ref)
+        # control = utils.simple_controller(cur_state, cur_ref)
 
-        # TODO: predict T=10 step
-        states, ref_states, control_seq, err_seq, _ = predict_T_step(cur_state, traj, cur_iter, T=5)
-        control = cec.CEC(ref_states, control_seq, err_seq, obstacles)
+        states, ref_states, control_seq, err_seq, _ = predict_T_step(cur_state, traj, cur_iter, T=10)
+        control = cec.CEC(cur_state, ref_states, obstacles, control_seq, err_seq)
         print(f"[v,w]: {control}")
         ################################################################
 
         # Apply control input
         next_state = car_next_state(time_step, cur_state, control, noise=True)
-
         # Update current state
         cur_state = next_state
         # Loop time
-        t2 = time()
+        time_itr = time() - t1
         if args.verbose:
             print(f"\n<----------{cur_iter}---------->")
-            print(f"time: {t2 - t1: .3f}")
-        times.append(t2 - t1)
-        cur_error = np.linalg.norm(cur_state - cur_ref)
-        error += cur_error
+            print(f"time: {time_itr: .3f}")
+        times.append(time_itr)
+        cur_err = np.linalg.norm(cur_state - cur_ref)
+        error += cur_err
         cur_iter += 1
     end_mainloop_time = time()
-    print('\n\n')
+    print('\n')
     print(f'Total duration: {end_mainloop_time - start_main_loop}')
-    print(f'Average iteration time: {np.array(times).mean() * 1e3} ms')
+    print(f'Average iteration time: {np.array(times).mean() * 1e3:.3f} ms')
     print(f'Final error: {error}')
 
     # Visualization
