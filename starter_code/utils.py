@@ -121,6 +121,33 @@ def visualize(
 
 
 # ----------------------------------------------------------------------------------
+def lissajous(k, tau):
+    """
+    This function returns the reference point at time step k
+    :param k: time step
+    :param tau:
+    :return:
+    """
+    xref_start = 0
+    yref_start = 0
+    A = 2
+    B = 2
+    a = 2 * np.pi / 50
+    b = 3 * a
+    a_t = a * tau
+    T = np.round(2 * np.pi / a_t)
+
+    k = k % T
+    delta = np.pi / 2
+    a_k_t = k * a_t
+    b_k_t = b * k * tau
+
+    xref = xref_start + A * np.sin(a_k_t + delta)
+    yref = yref_start + B * np.sin(b_k_t)
+    v = [A*a*np.cos(a_k_t + delta), B*b*np.cos(b_k_t)]
+    thetaref = np.arctan2(v[1], v[0])
+    return np.array([xref, yref, thetaref])
+
 
 def simple_controller(cur_state, ref_state, v_limit=(0.0, 1.0), w_limit=(-1.0, 1.0)):
     """This function implements a simple P controller"""
@@ -137,7 +164,38 @@ def simple_controller(cur_state, ref_state, v_limit=(0.0, 1.0), w_limit=(-1.0, 1
     return np.array([v, w])
 
 
-def error_dynamics(cur_error, ref_cur_state, ref_nxt_state, control, tau=0.5, noise=False):
+def car_next_state(time_step, cur_state, control, noise=True):
+    """
+    The discrete-time kinematic model of the differential-drive robot
+    :param time_step: \tau -> t
+    :param cur_state: [x_t, y_t, theta_t].T
+    :param control: [v_t, w_t]
+    :param noise: Gaussian Motion Noise W_t
+    :return: new_state
+    """
+    theta = cur_state[2]
+    # Yaw
+    rot_3d_z = np.array([
+        [np.cos(theta), 0],
+        [np.sin(theta), 0],
+        [0,             1]])
+    f = rot_3d_z @ control
+
+    if noise:
+        # Gaussian Motion Noise (w_t ∈ R^{3}) with N(0, diag(σ)^2 )
+        # where σ = [0.04, 0.04, 0.004] ∈ R^{3}
+        mu, sigma = 0, 0.04  # mean and standard deviation for (x,y)
+        w_xy = np.random.normal(mu, sigma, 2)
+        mu, sigma = 0, 0.004  # mean and standard deviation for theta
+        w_theta = np.random.normal(mu, sigma, 1)
+        w = np.concatenate((w_xy, w_theta))
+        new_state = cur_state + time_step * f.flatten() + w
+    else:
+        new_state = cur_state + time_step * f.flatten()
+    return new_state
+
+
+def error_dynamics(cur_error, ref_cur_state, ref_nxt_state, control, tau, noise=False):
     """
     :param cur_error:
     :param ref_cur_state:
@@ -180,6 +238,60 @@ def error_dynamics(cur_error, ref_cur_state, ref_nxt_state, control, tau=0.5, no
     nxt_err = cur_error + G @ u + ref_diff + w
     return nxt_err
 
+
+def predict_T_step(cur_state, traj, cur_iter, T, time_step):
+    """
+
+    :param cur_state: current car state
+    :param traj: reference trajectory
+    :param cur_iter: idx to track traj
+    :param T: number of steps
+    :param time_step:
+    :return:
+    """
+    state_seq = []
+    ref_seq = []
+    act_seq = []
+    true_error_seq = []
+    pred_error_seq = []
+
+    # current state
+    state = cur_state
+    for i in range(T):
+        state_seq.append(state)
+
+        # Reference state
+        cur_ref = traj(cur_iter + i, tau=time_step)
+        ref_seq.append(cur_ref)
+
+        # Control
+        u = simple_controller(state, cur_ref)
+        act_seq.append(u)
+
+        # True error (p̃ t := p t − r t and θ̃ t := θ t − α t)
+        true_error = state - cur_ref
+        true_error_seq.append(true_error)
+
+        # # Predict error (noise free)
+        # pred_nxt_error = utils.error_dynamics(true_error, cur_ref, traj(cur_iter + i+1), u, tau=time_step)
+        # if i == 0:
+        #     pred_error_seq.append(true_error)
+        # pred_error_seq.append(pred_nxt_error)
+
+        # Car next state (noise free)
+        nxt_state = car_next_state(time_step, state, u, noise=False)
+        state = nxt_state
+
+    state_seq = np.array(state_seq).reshape(3, -1)
+    ref_seq = np.array(ref_seq).reshape(3, -1)
+    act_seq = np.array(act_seq).reshape(2, -1)
+    true_error_seq = np.array(true_error_seq).reshape(3, -1)
+    # pred_error_seq = np.array(true_error_seq).reshape(3, -1)
+
+    return state_seq, ref_seq, act_seq, true_error_seq, pred_error_seq
+
+
+# ----------------------------------------------------------------------------------
 
 class MDP(object):
     def __init__(

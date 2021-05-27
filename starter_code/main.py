@@ -11,116 +11,6 @@ import utils
 import cec
 
 
-def lissajous(k):
-    """
-    This function returns the reference point at time step k
-    :param k: time step
-    :return:
-    """
-    xref_start = 0
-    yref_start = 0
-    A = 2
-    B = 2
-    a = 2 * np.pi / 50
-    b = 3 * a
-    a_t = a * time_step
-    T = np.round(2 * np.pi / a_t)
-
-    k = k % T
-    delta = np.pi / 2
-    a_k_t = k * a_t
-    b_k_t = b*k*time_step
-
-    xref = xref_start + A * np.sin(a_k_t + delta)
-    yref = yref_start + B * np.sin(b_k_t)
-    v = [A*a*np.cos(a_k_t + delta), B*b*np.cos(b_k_t)]
-    thetaref = np.arctan2(v[1], v[0])
-    return np.array([xref, yref, thetaref])
-
-
-def car_next_state(time_step, cur_state, control, noise=True):
-    """
-    The discrete-time kinematic model of the differential-drive robot
-    :param time_step: \tau -> t
-    :param cur_state: [x_t, y_t, theta_t].T
-    :param control: [v_t, w_t]
-    :param noise: Gaussian Motion Noise W_t
-    :return: new_state
-    """
-    theta = cur_state[2]
-    # Yaw
-    rot_3d_z = np.array([
-        [np.cos(theta), 0],
-        [np.sin(theta), 0],
-        [0,             1]])
-    f = rot_3d_z @ control
-
-    if noise:
-        # Gaussian Motion Noise (w_t ∈ R^{3}) with N(0, diag(σ)^2 )
-        # where σ = [0.04, 0.04, 0.004] ∈ R^{3}
-        mu, sigma = 0, 0.04  # mean and standard deviation for (x,y)
-        w_xy = np.random.normal(mu, sigma, 2)
-        mu, sigma = 0, 0.004  # mean and standard deviation for theta
-        w_theta = np.random.normal(mu, sigma, 1)
-        w = np.concatenate((w_xy, w_theta))
-        new_state = cur_state + time_step * f.flatten() + w
-    else:
-        new_state = cur_state + time_step * f.flatten()
-    return new_state
-
-
-def predict_T_step(cur_state, traj, cur_iter, T=10, time_step=0.5):
-    """
-
-    :param cur_state: current car state
-    :param traj: reference trajectory
-    :param cur_iter: idx to track traj
-    :param T: number of steps
-    :param time_step: 0.5
-    :return:
-    """
-    state_seq = []
-    ref_seq = []
-    act_seq = []
-    true_error_seq = []
-    pred_error_seq = []
-
-    # current state
-    state = cur_state
-    for i in range(T):
-        state_seq.append(state)
-
-        # Reference state
-        cur_ref = traj(cur_iter + i)
-        ref_seq.append(cur_ref)
-
-        # Control
-        u = utils.simple_controller(state, cur_ref)
-        act_seq.append(u)
-
-        # True error (p̃ t := p t − r t and θ̃ t := θ t − α t)
-        true_error = state - cur_ref
-        true_error_seq.append(true_error)
-
-        # # Predict error (noise free)
-        # pred_nxt_error = utils.error_dynamics(true_error, cur_ref, traj(cur_iter + i+1), u, noise=False)
-        # if i == 0:
-        #     pred_error_seq.append(true_error)
-        # pred_error_seq.append(pred_nxt_error)
-
-        # Car next state (noise free)
-        nxt_state = car_next_state(time_step, state, u, noise=False)
-        state = nxt_state
-
-    state_seq = np.array(state_seq).reshape(3, -1)
-    ref_seq = np.array(ref_seq).reshape(3, -1)
-    act_seq = np.array(act_seq).reshape(2, -1)
-    true_error_seq = np.array(true_error_seq).reshape(3, -1)
-    # pred_error_seq = np.array(true_error_seq).reshape(3, -1)
-
-    return state_seq, ref_seq, act_seq, true_error_seq, pred_error_seq
-
-
 if __name__ == '__main__':
     if True:
         p = argparse.ArgumentParser()
@@ -157,8 +47,9 @@ if __name__ == '__main__':
     ])
 
     # Params
-    traj = lissajous
+    traj = utils.lissajous
     car_states, ref_traj, times = [], [], []
+    error_lst = []
     error = 0.0
 
     # -------------------- Start main loop------------------------------------------
@@ -172,8 +63,8 @@ if __name__ == '__main__':
         t1 = time()
 
         # Get reference state
-        cur_time_step = cur_iter * time_step
-        cur_ref = traj(cur_iter)
+        # cur_time_step = cur_iter * time_step
+        cur_ref = traj(cur_iter, tau=time_step)
 
         # Save current state and reference state for visualization
         ref_traj.append(cur_ref)
@@ -183,28 +74,35 @@ if __name__ == '__main__':
         # Generate control input
         # TODO: Replace this simple controller by your own controller
         # control = utils.simple_controller(cur_state, cur_ref)
-
-        states, ref_states, control_seq, err_seq, _ = predict_T_step(cur_state, traj, cur_iter, T=10)
+        states, ref_states, control_seq, err_seq, _ = utils.predict_T_step(
+            cur_state,
+            traj, cur_iter,
+            T=100,
+            time_step=time_step
+        )
         control = cec.CEC(cur_state, ref_states, obstacles, control_seq, err_seq)
         print(f"[v,w]: {control}")
         ################################################################
 
         # Apply control input
-        next_state = car_next_state(time_step, cur_state, control, noise=True)
+        next_state = utils.car_next_state(time_step, cur_state, control, noise=True)
+
         # Update current state
         cur_state = next_state
+
         # Loop time
         time_itr = time() - t1
         if args.verbose:
             print(f"\n<----------{cur_iter}---------->")
             print(f"time: {time_itr: .3f}")
         times.append(time_itr)
-        cur_err = np.linalg.norm(cur_state - cur_ref)
+        cur_err = np.linalg.norm((cur_state - cur_ref)[:2])
+        error_lst.append(cur_err)
+        ic(cur_err)
         error += cur_err
         cur_iter += 1
-    end_mainloop_time = time()
     print('\n')
-    print(f'Total duration: {end_mainloop_time - start_main_loop}')
+    print(f'Total duration: {time() - start_main_loop}')
     print(f'Average iteration time: {np.array(times).mean() * 1e3:.3f} ms')
     print(f'Final error: {error}')
 
@@ -212,6 +110,17 @@ if __name__ == '__main__':
     ref_traj = np.array(ref_traj)
     car_states = np.array(car_states)
     times = np.array(times)
+
+
+    error_lst = np.array(error_lst)
+    plt.scatter(range(len(error_lst)), error_lst, label='error')
+    plt.legend()
+    plt.show()
+    plt.scatter(car_states[:, 0], car_states[:, 1], label='car')
+    plt.scatter(ref_traj[:, 0], ref_traj[:, 1], label='reference')
+    plt.legend()
+    plt.show()
+
     if args.render:
         try:
             utils.visualize(car_states, ref_traj, obstacles, times, time_step, save=args.save)
