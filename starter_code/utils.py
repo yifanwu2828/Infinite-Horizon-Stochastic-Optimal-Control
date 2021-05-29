@@ -1,12 +1,36 @@
-from time import time
+from typing import Optional, Callable
+from functools import lru_cache
+import time
 
 import numpy as np
 from scipy.stats import multivariate_normal
 import matplotlib.pyplot as plt
 from matplotlib import animation
-
 from icecream import ic
 
+
+def tic(message: Optional[str] = None) -> float:
+    """ Timing Function """
+    if message:
+        print(message)
+    else:
+        print("############ Time Start ############")
+    return time.time()
+
+
+def toc(t_start: float, name: Optional[str] = "Operation", ftime=False) -> None:
+    """ Timing Function """
+    assert isinstance(t_start, float)
+    sec: float = time.time() - t_start
+    if ftime:
+        duration = time.strftime("%H:%M:%S", time.gmtime(sec))
+        print(f'\n############ {name} took: {str(duration)} ############\n')
+    else:
+        print(f'\n############ {name} took: {sec:.4f} sec. ############\n')
+
+
+############################################
+############################################
 
 def visualize(
         car_states: np.ndarray,
@@ -82,10 +106,10 @@ def visualize(
     min_scale_y = min(init_state[1], np.min(ref_traj[:, 1])) - 1.5
     max_scale_y = max(init_state[1], np.max(ref_traj[:, 1])) + 1.5
     # TODO: change this back
-    # ax.set_xlim(left=min_scale_x, right=max_scale_x)
-    # ax.set_ylim(bottom=min_scale_y, top=max_scale_y)
-    ax.set_xlim(left=-10, right=10)
-    ax.set_ylim(bottom=-10, top=10)
+    ax.set_xlim(left=min_scale_x, right=max_scale_x)
+    ax.set_ylim(bottom=min_scale_y, top=max_scale_y)
+    # ax.set_xlim(left=-10, right=10)
+    # ax.set_ylim(bottom=-10, top=10)
     for circle in circles:
         ax.add_patch(circle)
     # create lines:
@@ -117,15 +141,16 @@ def visualize(
     plt.show()
 
     if save:
-        sim.save('./fig/animation' + str(time()) + '.gif', writer='ffmpeg', fps=15)
+        sim.save('./fig/animation' + str(time.time()) + '.gif', writer='ffmpeg', fps=15)
 
 
 # ----------------------------------------------------------------------------------
-def lissajous(k, tau):
+@lru_cache(maxsize=1000)
+def lissajous(k: int, time_step: float):
     """
     This function returns the reference point at time step k
     :param k: time step
-    :param tau:
+    :param time_step:
     :return:
     """
     xref_start = 0
@@ -134,17 +159,12 @@ def lissajous(k, tau):
     B = 2
     a = 2 * np.pi / 50
     b = 3 * a
-    a_t = a * tau
-    T = np.round(2 * np.pi / a_t)
-
+    T = np.round(2 * np.pi / (a * time_step))
     k = k % T
     delta = np.pi / 2
-    a_k_t = k * a_t
-    b_k_t = b * k * tau
-
-    xref = xref_start + A * np.sin(a_k_t + delta)
-    yref = yref_start + B * np.sin(b_k_t)
-    v = [A*a*np.cos(a_k_t + delta), B*b*np.cos(b_k_t)]
+    xref = xref_start + A * np.sin(a * k * time_step + delta)
+    yref = yref_start + B * np.sin(b * k * time_step)
+    v = [A * a * np.cos(a * k * time_step + delta), B * b * np.cos(b * k * time_step)]
     thetaref = np.arctan2(v[1], v[0])
     return np.array([xref, yref, thetaref])
 
@@ -164,7 +184,7 @@ def simple_controller(cur_state, ref_state, v_limit=(0.0, 1.0), w_limit=(-1.0, 1
     return np.array([v, w])
 
 
-def car_next_state(time_step, cur_state, control, noise=True):
+def car_next_state(time_step: float, cur_state, control, noise=True):
     """
     The discrete-time kinematic model of the differential-drive robot
     :param time_step: \tau -> t
@@ -195,100 +215,83 @@ def car_next_state(time_step, cur_state, control, noise=True):
     return new_state
 
 
-def error_dynamics(cur_error, ref_cur_state, ref_nxt_state, control, tau, noise=False):
+def error_dynamics(cur_error, cur_ref, nxt_ref, control, tau):
     """
     :param cur_error:
-    :param ref_cur_state:
-    :param ref_nxt_state:
+    :param cur_ref:
+    :param nxt_ref:
     :param control: control [v_t, w_t]
     :param tau: time_step
-    :param noise: if True: add Gaussian Motion Noise W_t
     :return: error next step
     """
-    assert isinstance(cur_error, np.ndarray)
-    assert isinstance(ref_cur_state, np.ndarray)
-    assert isinstance(ref_nxt_state, np.ndarray)
-    assert isinstance(control, np.ndarray)
-    assert isinstance(tau, float)
-
     cur_error = cur_error.reshape(3, -1)
     theta_err = cur_error[2, 0]
-    ref_diff = (ref_cur_state - ref_nxt_state).reshape(3, -1)
+    ref_diff = (cur_ref - nxt_ref).reshape(3, -1)
 
+    a_t = cur_ref[2]
     u = control.reshape(2, -1)
 
     G = np.array([
-        [tau * np.cos(theta_err), 0],
-        [tau * np.sin(theta_err), 0],
+        [tau * np.cos(theta_err + a_t), 0],
+        [tau * np.sin(theta_err+ a_t), 0],
         [0,                     tau],
     ])
-    w = 0
-    if noise:
-        '''
-        Gaussian Motion Noise (w_t ∈ R^{3}) with N(0, diag(σ)^2 )
-        where σ = [0.04, 0.04, 0.004] ∈ R^{3}
-        '''
-        # mean and standard deviation for (x,y)
-        mu_xy, sigma_xy = 0, 0.04
-        w_xy = np.random.normal(mu_xy, sigma_xy, 2)
-        # mean and standard deviation for theta
-        mu_theta, sigma_theta = 0, 0.004
-        w_theta = np.random.normal(mu_theta, sigma_theta, 1)
-        w = np.concatenate((w_xy, w_theta))
-    nxt_err = cur_error + G @ u + ref_diff + w
-    return nxt_err
+    nxt_err = cur_error + G @ u + ref_diff
+    return nxt_err.reshape(-1)
 
-
-def predict_T_step(cur_state, traj, cur_iter, T, time_step):
+def predict_T_step(
+        cur_state: np.ndarray,
+        traj: Callable,
+        cur_iter,
+        T: int,
+        time_step: float
+):
     """
-
     :param cur_state: current car state
-    :param traj: reference trajectory
+    :param traj: reference trajectory function
     :param cur_iter: idx to track traj
     :param T: number of steps
     :param time_step:
     :return:
     """
-    state_seq = []
-    ref_seq = []
-    act_seq = []
-    true_error_seq = []
-    pred_error_seq = []
+    state_seq = np.empty((3, T))
+    ref_seq = np.empty((3, T))
+    control_seq = np.empty((2, T))
+    cur_error_seq = np.empty((3, T))
+    nxt_error_seq = np.empty((3, T-1))
 
     # current state
     state = cur_state
+
     for i in range(T):
-        state_seq.append(state)
+        state_seq[:, i] = state
 
         # Reference state
-        cur_ref = traj(cur_iter + i, tau=time_step)
-        ref_seq.append(cur_ref)
+        cur_ref = traj(cur_iter + i, time_step=time_step)
+        nxt_ref = traj(cur_iter + i + 1, time_step=time_step)
+        ref_seq[:, i] = cur_ref
 
         # Control
         u = simple_controller(state, cur_ref)
-        act_seq.append(u)
+        control_seq[:, i] = u
 
         # True error (p̃ t := p t − r t and θ̃ t := θ t − α t)
         true_error = state - cur_ref
-        true_error_seq.append(true_error)
+        cur_error_seq[:, i] = true_error
 
-        # # Predict error (noise free)
-        # pred_nxt_error = utils.error_dynamics(true_error, cur_ref, traj(cur_iter + i+1), u, tau=time_step)
-        # if i == 0:
-        #     pred_error_seq.append(true_error)
-        # pred_error_seq.append(pred_nxt_error)
+        # Predict error (noise free)
+        pred_nxt_error = error_dynamics(true_error, cur_ref, nxt_ref, u, tau=time_step)
+        if i + 1 >= T-1:
+            continue
+        else:
+            nxt_error_seq[:, i] = pred_nxt_error
 
         # Car next state (noise free)
-        nxt_state = car_next_state(time_step, state, u, noise=False)
+        nxt_state = car_next_state(time_step, cur_state=state, control=u, noise=False)
         state = nxt_state
 
-    state_seq = np.array(state_seq).reshape(3, -1)
-    ref_seq = np.array(ref_seq).reshape(3, -1)
-    act_seq = np.array(act_seq).reshape(2, -1)
-    true_error_seq = np.array(true_error_seq).reshape(3, -1)
-    # pred_error_seq = np.array(true_error_seq).reshape(3, -1)
 
-    return state_seq, ref_seq, act_seq, true_error_seq, pred_error_seq
+    return state_seq, ref_seq, control_seq, cur_error_seq, nxt_error_seq
 
 
 # ----------------------------------------------------------------------------------

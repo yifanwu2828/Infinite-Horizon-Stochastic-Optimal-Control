@@ -1,13 +1,36 @@
 from typing import Optional
 import numpy as np
-from casadi import Opti, pi, sin, cos, sqrt, hcat, vcat
+from casadi import Opti, pi, sin, cos, hcat, vcat
 from icecream import ic
+import matplotlib.pyplot as plt
+
+# Position boundary
+x_min, x_max = (-3, 3)
+y_min, y_max = (-3, 3)
+
+# Orientation boundary (yaw angle)
+theta_min, theta_max = (-pi, pi)
+
+# Control Limit
+v_min, v_max = (0.0, 1.0)  # linear velocity
+w_min, w_max = (-1.0, 1.0)  # angular velocity
+
+
+def PSD_check(Q, R, q, p, u, theta):
+
+    pQp = p.T @ Q @ p
+    uRu = u.T @ R @ u
+    cos_sq = q * (1 - cos(theta)) ** 2
+    assert pQp >= 0
+    assert uRu >= 0
+    assert cos_sq >= 0
 
 
 def CEC(
-        X0: np.ndarray,
+        cur_states: np.ndarray,
         ref_X: np.ndarray,
         obstacles: np.ndarray,
+        tau,
         control_seq: Optional[np.ndarray] = None,
         error_seq: Optional[np.ndarray] = None,
         verbose=False
@@ -16,16 +39,15 @@ def CEC(
     CEC is a suboptimal control scheme that applies,
     at each stage, the control that would be optimal
     if the noise variables w_t were fixed at their expected values(zero in this case)
-    :param X0:
+    :param cur_states:
     :param ref_X: (3,T)
     :param obstacles: (2,3)
+    :param tau : time_step
     :param control_seq:
     :param error_seq:
     :param verbose:
     :return: control (2,)
     """
-    # Current State
-    X0 = X0.reshape(3, -1)
 
     # Obstacles
     circle1 = obstacles[0, :]  # [-2. , -2. ,  0.5]
@@ -33,122 +55,120 @@ def CEC(
     rad1 = circle1[-1]
     rad2 = circle2[-1]
 
-    # Position boundary
-    x_min, x_max = (-3, 3)
-    y_min, y_max = (-3, 3)
-
-    # Orientation boundary (yaw angle)
-    theta_min, theta_max = (-pi, pi - 1e-8)
-
-    # Control Limit
-    v_min, v_max = (0.0,  1.0)  # linear velocity
-    w_min, w_max = (-1.0, 1.0)  # angular velocity
-
-    # Time step
-    tau = 0.5
     # total number of control intervals
-    T = ref_X.shape[1]
+    T = ref_X.shape[1]  # 10
 
+    # Current State
+    X0 = cur_states[:3, 0].reshape(3, -1)
+    ref_X0 = ref_X[:3, 0].reshape(3, -1)
+    e0 = X0 - ref_X0
     # Hyperparameter
-    q = 1/T
-    Q = 1/T * np.array([
+    q = 10
+    Q = np.array([
         [1, 0],
         [0, 1],
     ])
-    R = 1/T * np.array([
+    R = np.array([
         [3, 0],
         [0, 1],
     ])
 
-    pQp = error_seq[:2, 0].T @ Q @ error_seq[:2, 0]
-    uRu = control_seq[:, 0].T @ R @ control_seq[:, 0]
-    cos_sq = q * (1 - cos(error_seq[2, :][0])) ** 2
-    assert pQp >= 0
-    assert uRu >= 0
-    assert cos_sq >= 0
-
-    gamma = 0.99
-
+    gamma = 0.95
+    # PSD_check(Q, R, q, p=error_seq[:2, 0], u=control_seq[:, 0], theta=error_seq[2, 0])
 
     # Optimization problem
     opti = Opti()
+
     # variable
-    u = opti.variable(2, T)
-    e = opti.variable(3, T)
+    u = opti.variable(2, T)     # (2,10)
+    e = opti.variable(3, T-1)   # (3, 9)
+    X = e + ref_X[:, 1:]        # (3, 9)
 
     # set initial value of variable
-    # opti.set_initial(u, control_seq)
-    # opti.set_initial(e[:, 0], error_seq[:, 0])
+    opti.set_initial(u, control_seq)
+    # opti.set_initial(e, error_seq)
 
-    f = 0
+    f = e0[:2].T @ Q @ e0[:2] + q*(1 - e0[2])**2 + u[:, 0].T @ R @ u[:, 0]
+
+    theta_0 = e0[2]
+    a_0 = ref_X[2, 0]
+
+    G_0 = np.array([
+        [tau * cos(theta_0 + a_0), 0],
+        [tau * sin(theta_0 + a_0), 0],
+        [0, tau]
+    ])
+    ref_diff_0 = ref_X[:, 0] - ref_X[:, 1]
+    e1 = e0 + G_0 @ u[:, 0] + ref_diff_0
+    opti.subject_to(e[:, 0] == e1)
+
+
     for i in range(T):
+        if i == T-1:
+            break
         p_t = e[:2, i]
         theta_t = e[2, i]
-        u_t = u[:, i]
+        u_t = u[:, i+1]
 
-        pos_err = e[:2, i]
-        ori_err = e[2, i]
-        r_t = ref_X[:2, i]
-        a_t = ref_X[2, i]
+        pQp = p_t.T @ Q @ p_t
+        q_sq = q * (1 - cos(theta_t)) ** 2
+        uRu = u_t.T @ R @ u_t
 
-        a = p_t.T @ Q @ p_t
-        b = q * (1 - cos(theta_t)) ** 2
-        c = u_t.T @ R @ u_t
 
-        if i == T - 1 and i != 0:
+        if i == T-2:
             # terminal cost
-            f += 0
+            f += pQp + q_sq
         else:
-            f += gamma ** i * (a + b + c)
+            f += (gamma ** (i+1)) * (pQp + q_sq + uRu)
 
-            x = hcat([tau * cos(ori_err), 0])
-            y = hcat([tau * sin(ori_err), 0])
+            a_t = ref_X[2, i+1]
+
+            x = hcat([tau * cos(theta_t + a_t), 0])
+            y = hcat([tau * sin(theta_t + a_t), 0])
             z = hcat([0, tau])
-
             G = vcat([x, y, z])
-            ref_diff = (ref_X[:, i] - ref_X[:, i + 1])
+            ref_diff = ref_X[:, i] - ref_X[:, i + 1]
 
             # error constraint (error dynamics)
             nxt_err = e[:, i] + G @ u[:, i] + ref_diff + 0
             opti.subject_to(e[:, i + 1] == nxt_err)
 
-            # control limit constraint
-            opti.subject_to(opti.bounded(v_min, u[0, i], v_max))
-            opti.subject_to(opti.bounded(w_min, u[1, i], w_max))
+    # control constraint
+    opti.subject_to(opti.bounded(v_min, u[0, :], v_max))
+    opti.subject_to(opti.bounded(w_min, u[1, :], w_max))
 
-            # position boundary constraint
-            opti.subject_to(opti.bounded(x_min, (pos_err + r_t)[0], x_max))
-            opti.subject_to(opti.bounded(y_min, (pos_err + r_t)[1], y_max))
-            # orientation boundary constraint
-            opti.subject_to(opti.bounded(theta_min, ori_err, theta_max))
+    # state constraint
+    opti.subject_to(opti.bounded(x_min, X[0, :], x_max))
+    opti.subject_to(opti.bounded(y_min, X[1, :], y_max))
 
-            # obstacles collision constraint
-            opti.subject_to(
-                sqrt(((pos_err + r_t)[0] - circle1[0]) ** 2 + ((pos_err + r_t)[1] - circle1[1]) ** 2) >= rad1
-            )
-            opti.subject_to(
-                sqrt(((pos_err + r_t)[0] - circle2[0]) ** 2 + ((pos_err + r_t)[1] - circle1[1]) ** 2) >= rad2
-            )
+    # obstacles collision constraint
+    opti.subject_to(
+        (X[0, :] - circle1[0]) ** 2 + (X[1, :] - circle1[1]) ** 2 >= rad1**2
+    )
+    opti.subject_to(
+        (X[0, :] - circle2[0]) ** 2 + (X[1, :] - circle1[1]) ** 2 >= rad2**2
+    )
 
     # ---- objective---------
     opti.minimize(f)
 
     p_opts = {"expand": True, "ipopt.print_level": 0}
+    # p_opts = {"expand": True}
     s_opts = {"max_iter": 100}
     opti.solver("ipopt", p_opts, s_opts)
 
-    sol = opti.solve()
-
-    ic(sol.value(a))
-    ic(sol.value(b))
-    ic(sol.value(c))
+    # sol1 = opti.solve()
+    # print(sol1.stats()["iter_count"])
+    # opti.set_initial(sol1.value_variables())
+    sol2 = opti.solve()
+    print(f"NLP itr: {sol2.stats()['iter_count']}")
 
     if verbose:
-        print(f"solved value: {sol.value(u)}")
+        print(f"solved value: {sol2.value(u)}")
     if T > 1:
-        control = sol.value(u)[:2, 0]
+        control = sol2.value(u)[:, 0]
     else:
-        control = sol.value(u)
+        control = sol2.value(u)
 
     return control
 
