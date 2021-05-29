@@ -15,6 +15,31 @@ theta_min, theta_max = (-pi, pi)
 v_min, v_max = (0.0, 1.0)  # linear velocity
 w_min, w_max = (-1.0, 1.0)  # angular velocity
 
+'''
+# Hyperparameter
+    q = 1.5
+    Q = np.array([
+        [1, 0],
+        [0, 1],
+    ])
+    R = np.array([
+        [10, 0],
+        [0, 1],
+    ])
+
+# Hyperparameter
+    q = 100
+    Q = np.array([
+        [1, 0],
+        [0, 2],
+    ])
+    R = np.array([
+        [5, 0],
+        [0, 2],
+    ])
+'''
+
+
 
 def PSD_check(Q, R, q, p, u, theta):
 
@@ -30,7 +55,7 @@ def CEC(
         cur_states: np.ndarray,
         ref_X: np.ndarray,
         obstacles: np.ndarray,
-        tau,
+        tau: float,
         control_seq: Optional[np.ndarray] = None,
         error_seq: Optional[np.ndarray] = None,
         verbose=False
@@ -60,16 +85,19 @@ def CEC(
 
     # Current State
     X0 = cur_states[:3, 0].reshape(3, -1)
+    # Current ref
     ref_X0 = ref_X[:3, 0].reshape(3, -1)
+    # Current
     e0 = X0 - ref_X0
+
     # Hyperparameter
-    q = 10
+    q = 1.5
     Q = np.array([
         [1, 0],
         [0, 1],
     ])
     R = np.array([
-        [3, 0],
+        [10, 0],
         [0, 1],
     ])
 
@@ -85,7 +113,7 @@ def CEC(
     X = e + ref_X[:, 1:]        # (3, 9)
 
     # set initial value of variable
-    opti.set_initial(u, control_seq)
+    # opti.set_initial(u, control_seq)
     # opti.set_initial(e, error_seq)
 
     f = e0[:2].T @ Q @ e0[:2] + q*(1 - e0[2])**2 + u[:, 0].T @ R @ u[:, 0]
@@ -143,10 +171,10 @@ def CEC(
 
     # obstacles collision constraint
     opti.subject_to(
-        (X[0, :] - circle1[0]) ** 2 + (X[1, :] - circle1[1]) ** 2 >= rad1**2
+        (X[0, :] - circle1[0]) ** 2 + (X[1, :] - circle1[1]) ** 2 > rad1**2
     )
     opti.subject_to(
-        (X[0, :] - circle2[0]) ** 2 + (X[1, :] - circle1[1]) ** 2 >= rad2**2
+        (X[0, :] - circle2[0]) ** 2 + (X[1, :] - circle1[1]) ** 2 > rad2**2
     )
 
     # ---- objective---------
@@ -160,15 +188,16 @@ def CEC(
     # sol1 = opti.solve()
     # print(sol1.stats()["iter_count"])
     # opti.set_initial(sol1.value_variables())
-    sol2 = opti.solve()
-    print(f"NLP itr: {sol2.stats()['iter_count']}")
 
-    if verbose:
-        print(f"solved value: {sol2.value(u)}")
-    if T > 1:
+    control = None
+    try:
+        sol2 = opti.solve()
+        print(f"NLP itr: {sol2.stats()['iter_count']}")
         control = sol2.value(u)[:, 0]
-    else:
-        control = sol2.value(u)
+        if verbose:
+            print(f"solved value: {sol2.value(u)}")
+    except RuntimeError:
+        ic(opti.debug.value(u)[:, 0])
 
     return control
 

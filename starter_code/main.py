@@ -15,7 +15,7 @@ if __name__ == '__main__':
     p = argparse.ArgumentParser()
     p.add_argument("--sim_time", help="simulation time(not change)", type=float, default=120)
     p.add_argument("--time_step", help="time between steps in seconds", type=float, default=0.5)
-    p.add_argument("-T", "--T", help="number of steps to collect", type=int, default=100)
+    p.add_argument("-T", "--T", help="number of steps to collect", type=int, default=10)
     p.add_argument("-r", "--render", help="Visualize Env", action="store_true", default=False)
     p.add_argument("--save", help="Save Trajectory", action="store_true", default=False)
     p.add_argument("--seed", help="Random Generator Seed", type=int, default=42)
@@ -72,8 +72,6 @@ if __name__ == '__main__':
         car_states.append(cur_state)
         ################################################################
         # Generate control input
-        # TODO: Replace this simple controller by your own controller
-        # control = utils.simple_controller(cur_state, cur_ref)
         states, ref_states, control_seq, cur_err_seq, nxt_err_seq = utils.predict_T_step(
             cur_state,
             traj, cur_iter,
@@ -82,7 +80,10 @@ if __name__ == '__main__':
         )
 
         control = cec.CEC(states, ref_states, obstacles, time_step, control_seq, nxt_err_seq)
+        if control is None:
+            control = utils.simple_controller(cur_state, cur_ref)
         print(f"[v,w]: {control}")
+
         ################################################################
 
         # Apply control input
@@ -97,7 +98,7 @@ if __name__ == '__main__':
             print(f"\n<----------{cur_iter}---------->")
             print(f"time: {time_itr: .3f}")
         times.append(time_itr)
-        cur_err = np.linalg.norm((cur_state - cur_ref)[:2])
+        cur_err = np.linalg.norm((cur_state - cur_ref), ord=2)
         error_lst.append(cur_err)
         ic(cur_err)
         error += cur_err
