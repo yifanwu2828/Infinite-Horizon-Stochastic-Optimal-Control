@@ -10,7 +10,7 @@ cd starter_code
 
 python3 main.py -r -T 10
 
-python 3 mdp.py
+python3 mdp.py
 
 ```
 
