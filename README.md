@@ -2,7 +2,6 @@
 
 Results are store under ./starter_code/fig
 
-Part1 CEC
 
 ## Example
 Enjoy CEC and GPI by running following script:
