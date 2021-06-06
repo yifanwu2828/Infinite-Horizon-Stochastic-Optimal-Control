@@ -15,29 +15,29 @@ theta_min, theta_max = (-pi, pi)
 v_min, v_max = (0.0, 1.0)  # linear velocity
 w_min, w_max = (-1.0, 1.0)  # angular velocity
 
-'''
-# Hyperparameter
-    q = 1.5
-    Q = np.array([
-        [1, 0],
-        [0, 1],
-    ])
-    R = np.array([
-        [10, 0],
-        [0, 1],
-    ])
 
 # Hyperparameter
-    q = 100
-    Q = np.array([
-        [1, 0],
-        [0, 2],
-    ])
-    R = np.array([
-        [5, 0],
-        [0, 2],
-    ])
-'''
+q = 1.5
+Q = np.array([
+    [2, 0],
+    [0, 1],
+])
+R = np.array([
+    [10, 0],
+    [0, 1],
+])
+
+# Hyperparameter
+# q = 100
+# Q = np.array([
+#     [1, 0],
+#     [0, 2],
+# ])
+# R = np.array([
+#     [5, 0],
+#     [0, 2],
+# ])
+
 
 
 
@@ -90,16 +90,8 @@ def CEC(
     # Current
     e0 = X0 - ref_X0
 
-    # Hyperparameter
-    q = 1.5
-    Q = np.array([
-        [1, 0],
-        [0, 1],
-    ])
-    R = np.array([
-        [10, 0],
-        [0, 1],
-    ])
+    # Hyperparameter declare in as global variable
+
 
     gamma = 0.95
     # PSD_check(Q, R, q, p=error_seq[:2, 0], u=control_seq[:, 0], theta=error_seq[2, 0])
@@ -113,8 +105,8 @@ def CEC(
     X = e + ref_X[:, 1:]        # (3, 9)
 
     # set initial value of variable
-    # opti.set_initial(u, control_seq)
-    # opti.set_initial(e, error_seq)
+    opti.set_initial(u, control_seq)
+    opti.set_initial(e, error_seq)
 
     f = e0[:2].T @ Q @ e0[:2] + q*(1 - e0[2])**2 + u[:, 0].T @ R @ u[:, 0]
 

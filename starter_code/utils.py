@@ -3,10 +3,9 @@ from functools import lru_cache
 import time
 
 import numpy as np
-from scipy.stats import multivariate_normal
 import matplotlib.pyplot as plt
 from matplotlib import animation
-from icecream import ic
+
 
 
 def tic(message: Optional[str] = None) -> float:
@@ -106,10 +105,10 @@ def visualize(
     min_scale_y = min(init_state[1], np.min(ref_traj[:, 1])) - 1.5
     max_scale_y = max(init_state[1], np.max(ref_traj[:, 1])) + 1.5
     # TODO: change this back
-    ax.set_xlim(left=min_scale_x, right=max_scale_x)
-    ax.set_ylim(bottom=min_scale_y, top=max_scale_y)
-    # ax.set_xlim(left=-10, right=10)
-    # ax.set_ylim(bottom=-10, top=10)
+    # ax.set_xlim(left=min_scale_x, right=max_scale_x)
+    # ax.set_ylim(bottom=min_scale_y, top=max_scale_y)
+    ax.set_xlim(left=-10, right=10)
+    ax.set_ylim(bottom=-10, top=10)
     for circle in circles:
         ax.add_patch(circle)
     # create lines:
@@ -184,7 +183,7 @@ def simple_controller(cur_state, ref_state, v_limit=(0.0, 1.0), w_limit=(-1.0, 1
     return np.array([v, w])
 
 
-def car_next_state(time_step: float, cur_state, control, noise=True):
+def car_next_state(time_step: float, cur_state, control, noise=False):
     """
     The discrete-time kinematic model of the differential-drive robot
     :param time_step: \tau -> t
@@ -215,39 +214,34 @@ def car_next_state(time_step: float, cur_state, control, noise=True):
     return new_state
 
 
-def error_dynamics(cur_error, cur_ref, nxt_ref, control, tau):
+def error_dynamics(cur_err, cur_ref, nxt_ref, ctrl, tau):
     """
-    :param cur_error:
+    :param cur_err:
     :param cur_ref:
     :param nxt_ref:
-    :param control: control [v_t, w_t]
+    :param ctrl: control [v_t, w_t]
     :param tau: time_step
     :return: error next step
     """
-    cur_error = cur_error.reshape(3, -1)
-    theta_err = cur_error[2, 0]
+    cur_err = cur_err.reshape(3, -1)
+    theta_err = cur_err[2, 0]
     ref_diff = (cur_ref - nxt_ref).reshape(3, -1)
 
     a_t = cur_ref[2]
-    u = control.reshape(2, -1)
+    u = ctrl.reshape(2, -1)
 
     G = np.array([
         [tau * np.cos(theta_err + a_t), 0],
-        [tau * np.sin(theta_err+ a_t), 0],
-        [0,                     tau],
+        [tau * np.sin(theta_err + a_t), 0],
+        [0,                           tau],
     ])
-    nxt_err = cur_error + G @ u + ref_diff
+    nxt_err = cur_err + G @ u + ref_diff
     return nxt_err.reshape(-1)
 
-def predict_T_step(
-        cur_state: np.ndarray,
-        traj: Callable,
-        cur_iter,
-        T: int,
-        time_step: float
-):
+
+def predict_T_step(cur_X: np.ndarray, traj: Callable, cur_iter: int, T: int, time_step: float):
     """
-    :param cur_state: current car state
+    :param cur_X: current car state
     :param traj: reference trajectory function
     :param cur_iter: idx to track traj
     :param T: number of steps
@@ -261,7 +255,7 @@ def predict_T_step(
     nxt_error_seq = np.empty((3, T-1))
 
     # current state
-    state = cur_state
+    state = cur_X
 
     for i in range(T):
         state_seq[:, i] = state
@@ -296,64 +290,4 @@ def predict_T_step(
 
 # ----------------------------------------------------------------------------------
 
-class MDP(object):
-    def __init__(
-            self,
-            dt: float,
-            t: int = 100,  # should be fixed at 100 since reference trajectory is periodic 100
-            x_lim=(-3, 3), y_lim=(-3, 3), theta_limit=(-np.pi, np.pi),
-            v_lim=(-0, 1), w_lim=(-1, 1),
-            gamma: float = 0.99,
-            res: float = 0.1
-    ):
-        # Discrete time horizon
-        self.dt = dt
-        self.t = np.arange(0, t, self.dt)
 
-        # position
-        self.x_min, self.x_max = x_lim
-        self.y_min, self.y_max = y_lim
-        # orientation
-        self.theta_min, self.theta_max = theta_limit
-
-        # velocity
-        self.v_min, self.v_max = v_lim
-        self.w_min, self.w_max = w_lim
-        self.gamma = gamma
-        self.res = res
-
-        nX = np.ceil(((self.x_max - self.x_min) / self.res) + 1).astype('int')
-        nY = np.ceil(((self.y_max - self.y_min) / self.res) + 1).astype('int')
-        nTheta = np.ceil(((self.theta_max - self.theta_min) / self.res) + 1).astype('int')
-        self.nS = nX * nY * nTheta
-
-        nV = np.ceil(((self.v_max - self.v_min) / self.res) + 1).astype('int')
-        nW = np.ceil(((self.w_max - self.w_min) / self.res) + 1).astype('int')
-        self.nA = nV * nW
-
-        self.x = np.linspace(self.x_min, self.x_max, nX)
-        self.y = np.linspace(self.y_min, self.y_max, nY)
-        self.theta = np.linspace(self.theta_min, self.theta_max, nTheta)  # endpoint=False)
-
-        self.v = np.linspace(self.v_min, self.v_max, nV)  # linear velocity
-        self.w = np.linspace(self.w_min, self.w_max, nW)  # angular velocity
-
-
-    @staticmethod
-    def wrap_angle(angles):
-        n = int(np.abs((angles / np.pi)))
-        if n % 2 == 0:
-            angles = angles - n * np.pi * np.sign(angles)
-        else:
-            angles = angles - (n + 1) * np.pi * np.sign(angles)
-        return angles
-
-    def build_MDP(self):
-        # P(s, a, s')
-        P = np.zeros((self.nS, self.nA, self.nS))
-        # L(x, u)
-        L = np.zeros((self.nS, self.nA))
-
-
-if __name__ == '__main__':
-    mdp = MDP(dt=0.5)

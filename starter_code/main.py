@@ -1,4 +1,5 @@
 import argparse
+import sys
 import random
 from time import time
 
@@ -8,7 +9,7 @@ import matplotlib.pyplot as plt
 from icecream import ic
 
 import utils
-import cec
+import nlp
 
 
 if __name__ == '__main__':
@@ -44,7 +45,7 @@ if __name__ == '__main__':
     # Obstacles in the environment [x, y, rad]
     obstacles = np.array([
         [-2, -2, 0.5],
-        [1,   2, 0.5]
+        [1, 2, 0.5]
     ])
 
     # Params
@@ -79,7 +80,7 @@ if __name__ == '__main__':
             time_step=time_step
         )
 
-        control = cec.CEC(states, ref_states, obstacles, time_step, control_seq, nxt_err_seq)
+        control = nlp.CEC(states, ref_states, obstacles, time_step, control_seq, nxt_err_seq)
         if control is None:
             control = utils.simple_controller(cur_state, cur_ref)
         print(f"[v,w]: {control}")
@@ -112,7 +113,6 @@ if __name__ == '__main__':
     car_states = np.array(car_states)
     times = np.array(times)
 
-
     error_lst = np.array(error_lst)
     plt.scatter(range(len(error_lst)), error_lst, label='error')
     plt.legend()
@@ -128,7 +128,7 @@ if __name__ == '__main__':
             utils.visualize(car_states, ref_traj, obstacles, times, time_step, save=args.save)
         except KeyboardInterrupt:
             plt.close('all')
-            pass
+            sys.exit(0)
 
 
 
